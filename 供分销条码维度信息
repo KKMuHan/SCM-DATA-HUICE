@@ -1,0 +1,50 @@
+WITH mi AS (SELECT company_shop_id     AS 'gx_shop_id',
+                   provider_nick_no    AS 'gx_nick_no',
+                   se.sid              AS 'gx_sid',
+                   distributor_shop_id AS 'fx_shop_id',
+                   fenxiao_nick_no     AS 'fx_nick_no',
+                   fx.sid              AS 'fx_sid',
+                   request_source      AS 're_source',
+                   auth_mode
+
+                FROM gx.dwd_sync_main_kd_supplier_distributor_relevance sup_dis_relevance
+                INNER JOIN gx.dwd_sync_main_kd_supplier_settle se
+                    ON sup_dis_relevance.company_shop_id = se.shop_id
+                INNER JOIN gx.dwd_sync_main_kd_supplier_settle fx
+                    ON sup_dis_relevance.fenxiao_nick_no = fx.nick_no
+                WHERE se.merchant_status = 50
+                AND se.is_delete = 0
+                AND fx.merchant_status = 50
+                AND fx.is_delete = 0
+                AND cooperation_status = 70
+            ),
+    sku AS (SELECT sys_shop_id          AS 'shop_id',
+                   goods_id,
+                   sku_id,
+                   barcode,
+                   goods_name,
+                   sid,
+                   cost_price,
+                   dis_price_lv1,
+                   company_name
+            FROM gx.dwd_sku_spu_ext_mv sku
+			WHERE 1 = 1
+			[[ AND sid IN ({{sid}}) ]]	
+				    [[AND CASE 
+	          WHEN {{check_barcode}} = 1 THEN barcode  = ''
+			  WHEN {{check_barcode}} = 0 THEN barcode != ''
+		  END]]
+	    [[ and barcode in ({{ barcode }}) ]]
+            )
+SELECT DISTINCT
+    sku.barcode                       AS `条码`,
+    sku.sid                           AS `商家sid`,
+    sku.goods_id                      AS `货品id`,
+    sku.goods_name                    AS `商品名称`,
+    IFNULL(sku.cost_price, 0)         AS `成本价`,
+    sku.dis_price_lv1                 AS `一级分销价`,
+--    mi.gx_sid                        AS `上游供销商sid`,
+    sku.company_name                  AS `公司名称`
+
+FROM sku
+    LEFT JOIN mi ON mi.fx_sid = sku.sid AND mi.fx_shop_id = sku.shop_id
