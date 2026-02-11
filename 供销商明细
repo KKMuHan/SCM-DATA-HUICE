@@ -1,0 +1,31 @@
+with base as (select sid,
+                     sys_shop_id,
+                     nick_no,
+                     count(distinct sku_id)                           as '供销商货品数量',
+                     count(distinct if(barcode != '', barcode, null)) as '有条码的货品数量'
+              from gx.dwd_sku_spu_ext_mv
+              where stop_flag = 0
+              group by sid, sys_shop_id, nick_no),
+     relevance as (select rel.company_shop_id                     AS `供销商shopID`,
+                          rel.provider_nick_no                    AS `供销商编码`,
+                          COUNT(DISTINCT rel.distributor_shop_id) AS `分销商总数`
+                   from gx.dwd_sync_main_kd_supplier_distributor_relevance rel
+                   where del_flag = 0
+                     AND cooperation_status = 70
+                     AND is_sup_delete_coop = 0
+                     AND is_dis_delete_coop = 0
+                   GROUP BY rel.company_shop_id, rel.provider_nick_no)
+SELECT se.sid                             AS `供销商卖家账号`,
+       se.shop_id                         AS `供销商shopID`,
+       se.nick_no                         AS `供销商编码`,
+       IFNULL(rel.分销商总数, 0)           AS `分销商总数`,
+       IFNULL(base.供销商货品数量, 0)      AS `供销商货品数量`,
+       IFNULL(base.有条码的货品数量, 0)    AS `有条码的货品数量`
+FROM gx.dwd_sync_main_kd_supplier_settle se
+         left join relevance rel on rel.供销商shopID = se.shop_id and rel.供销商编码 = se.nick_no
+         LEFT JOIN base on base.sys_shop_id = se.shop_id and base.sid = se.sid and
+                           base.nick_no = se.nick_no
+WHERE 1 = 1
+  and is_delete = 0
+  and merchant_status = 50
+  [[and se.sid in ({{gx_sid}})]]
