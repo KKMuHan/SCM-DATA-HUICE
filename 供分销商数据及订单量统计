@@ -1,0 +1,46 @@
+WITH mi AS (SELECT company_shop_id     AS 'gx_shop_id',
+                   provider_nick_no    AS 'gx_nick_no',
+                   se.sid              AS 'gx_sid',
+                   distributor_shop_id AS 'fx_shop_id',
+                   fenxiao_nick_no     AS 'fx_nick_no',
+                   fx.sid              AS 'fx_sid',
+                   request_source      AS 're_source',
+                   auth_mode
+
+            FROM gx.dwd_sync_main_kd_supplier_distributor_relevance sup_dis_relevance
+            INNER JOIN gx.dwd_sync_main_kd_supplier_settle se
+                ON sup_dis_relevance.company_shop_id = se.shop_id
+            INNER JOIN gx.dwd_sync_main_kd_supplier_settle fx
+                ON sup_dis_relevance.fenxiao_nick_no = fx.nick_no
+            WHERE se.merchant_status = 50
+            AND se.is_delete = 0
+            AND fx.merchant_status = 50
+            AND fx.is_delete = 0
+            AND cooperation_status = 70),
+     order_info AS (SELECT trade_order.gx_nick_no,
+                           trade_order.fx_nick_no,
+                           trade_order.trade_count                 AS 'order_num'
+                    FROM scm.dws_daily_trade_order trade_order
+                        INNER JOIN mi ON mi.gx_nick_no = trade_order.gx_nick_no
+                            AND mi.fx_nick_no = trade_order.fx_nick_no
+                    WHERE 1 = 1
+					AND trade_date >= date_sub(curdate(), INTERVAL '1' day)
+                    )
+SELECT DISTINCT
+    COUNT(DISTINCT mi.gx_shop_id)                                  AS `供销商总数`,
+    COUNT(DISTINCT mi.fx_shop_id)                                  AS `分销商总数`,
+    SUM(order_info.order_num)                                      AS `分销订单总量`,
+    COUNT(DISTINCT IF(mi.re_source = 1, mi.fx_shop_id, NULL))      AS `分找供数量`,
+    SUM(CASE WHEN mi.re_source = 1 THEN order_info.order_num END)  AS `分找供单量`,
+    COUNT(DISTINCT IF(mi.re_source = 2, mi.fx_shop_id, NULL))      AS `供找分数量`,
+    SUM(CASE WHEN mi.re_source = 2 THEN order_info.order_num END)  AS `供找分单量`,
+    COUNT(DISTINCT IF(mi.re_source = 3, mi.fx_shop_id, NULL))      AS `互为合作数量`,
+    SUM(CASE WHEN mi.re_source = 3 THEN order_info.order_num END)  AS `互为合作单量`,
+    COUNT(DISTINCT pd.distribution_shop_id)                        AS `私域分销商总数`,
+    SUM(CASE WHEN mi.fx_shop_id = pd.distribution_shop_id THEN order_info.order_num END)
+                                                                   AS `私域分销订单数`
+FROM mi
+    LEFT JOIN order_info ON order_info.gx_nick_no = mi.gx_nick_no
+		AND order_info.fx_nick_no = mi.fx_nick_no
+    LEFT JOIN gx.kd_gx_user_private_domain_relation pd
+        ON mi.gx_shop_id = pd.supplier_shop_id AND mi.fx_shop_id = pd.distribution_shop_id;
