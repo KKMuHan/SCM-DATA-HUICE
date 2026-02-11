@@ -1,0 +1,80 @@
+WITH mi AS (SELECT company_shop_id        AS 'gx_shop_id',
+                   provider_nick_no       AS 'gx_nick_no',
+                   se.sid                 AS 'gx_sid',
+                   distributor_shop_id    AS 'fx_shop_id',
+                   fenxiao_nick_no        AS 'fx_nick_no',
+                   fx.sid                 AS 'fx_sid',
+                   fenxiao_source         AS 'fx_source',
+                   request_source         AS 're_source',
+                   --       IFNULL(sa.last_login_shop_id , '无')
+                   --                             AS 'last_shop_id',
+                   --       sa.register_ip        AS 'reg_ip',
+                   --       IF(SA.is_supplier = 0, '不是', '是')
+                   --                             AS `gx_account`,
+                   auth_mode
+             FROM gx.dwd_sync_main_kd_supplier_distributor_relevance sup_dis_relevance
+       --         LEFT JOIN  gx.dwd_sync_main_kd_shop_account sa
+       --                    ON sup_dis_relevance.shop_id = sa.sys_id AND sup_dis_relevance.sid = sa.sid
+                  inner join gx.dwd_sync_main_kd_supplier_settle se
+                      on sup_dis_relevance.company_shop_id = se.shop_id
+                  inner join gx.dwd_sync_main_kd_supplier_settle fx
+                      on sup_dis_relevance.fenxiao_nick_no = fx.nick_no
+             WHERE se.merchant_status = 50
+             AND se.is_delete = 0
+             AND fx.merchant_status = 50
+             AND fx.is_delete = 0
+             AND cooperation_status = 70
+              ),
+     account_info AS (SELECT sa.sid                 AS `卖家账号`,
+                             sa.sys_id              AS `店铺ID`,
+                             sa.last_login_shop_id  AS `上次登录店铺ID`,
+                             sa.is_supplier         AS `是否为供应商`,
+                             sa.register_ip         AS `登录IP`
+
+                      FROM gx.dwd_sync_main_kd_shop_account sa
+                          LEFT JOIN mi ON sa.sid
+    ),
+     order_info as (select trade_order.gx_nick_no,
+                           trade_order.fx_nick_no,
+                           COUNT(*)                  as 'order_num'
+                    from scm.dwd_trade_order trade_order
+                             inner join mi on mi.gx_nick_no = trade_order.gx_nick_no
+                        and mi.fx_nick_no = trade_order.fx_nick_no
+                    where trade_created >= date_sub(curdate(), interval 7 day)
+                      and trade_status in (30, 80, 100)
+                    group by trade_order.gx_nick_no,
+                             trade_order.fx_nick_no)
+SELECT DISTINCT
+    mi.gx_shop_id                                                 AS '供销商shop_id',
+    mi.gx_nick_no                                                 AS '供销商编码',
+    mi.gx_sid                                                     AS `供销商卖家账号`,
+    COUNT(DISTINCT mi.fx_shop_id)                                 AS `分销商总数`,
+    COUNT(DISTINCT IF(mi.re_source = 1, mi.fx_shop_id, NULL))     AS `分找供数量`,
+    GROUP_CONCAT(
+        DISTINCT
+        IF(mi.re_source = 1, CAST(mi.fx_sid AS CHAR), NULL),','
+    )                                                             AS `分找供分销商sid列表`,
+    SUM(CASE WHEN mi.re_source = 1 THEN order_info.order_num END) AS `分找供单量`,
+    COUNT(DISTINCT IF(mi.re_source = 2, mi.fx_shop_id, NULL))     AS `供找分数量`,
+    SUM(CASE WHEN mi.re_source = 2 THEN order_info.order_num END) AS `供找分单量`,
+    COUNT(DISTINCT IF(mi.re_source = 3, mi.fx_shop_id, NULL))     AS `互为合作数量`,
+    SUM(CASE WHEN mi.re_source = 3 THEN order_info.order_num END) AS `互为合作单量`,
+    COUNT(DISTINCT pd.distribution_shop_id)                       AS `私域分销商总数`,
+    SUM(order_info.order_num)                                     AS `分销订单总量`,
+    COUNT(sku.goods_id)                                           AS `供销商货品数量`,
+    COUNT(IF(sku.barcode != '', sku.barcode, NULL))               AS `有条码的货品数量`,
+    COUNT(DISTINCT
+        CASE
+            WHEN mi.fx_source = 0 THEN mi.fx_shop_id
+        END )                                                     AS `线上分销商总数`
+FROM mi
+     LEFT JOIN gx.kd_gx_user_private_domain_relation pd
+         ON mi.gx_shop_id = pd.supplier_shop_id AND mi.fx_shop_id = pd.distribution_shop_id
+     LEFT JOIN gx.dwd_sku_spu_ext_mv sku
+         ON sku.sid = mi.gx_sid
+     left join order_info on order_info.gx_nick_no = mi.gx_nick_no
+		 AND order_info.fx_nick_no = mi.fx_nick_no
+WHERE mi.gx_sid = 'qiyuedz2'
+GROUP BY mi.gx_shop_id,mi.gx_nick_no,mi.gx_sid
+ORDER BY `分销订单总量` DESC , `分销商总数` DESC
+LIMIT 2000;
