@@ -58,4 +58,53 @@ WHERE
     trade_created >= DATE_SUB(CURDATE(), INTERVAL 1 DAY)
     AND fx_sid = '13958480448';
 
+SELECT
+    se.sid                                       AS `供销商卖家账号`,
+    rel.company_shop_id                          AS `供销商shopID`,
+    rel.provider_nick_no                         AS `供销商编码`,
+    COUNT(DISTINCT rel.distributor_shop_id)      AS `分销商总数`,
+    COUNT(sku.goods_id)                          AS `供销商货品数量`,
+    COUNT(IF(sku.barcode != '', sku.barcode, NULL))
+                                                 AS `有条码的货品数量`
+FROM gx.dwd_sync_main_kd_supplier_distributor_relevance rel
+LEFT JOIN gx.dwd_sync_main_kd_supplier_settle se
+         ON rel.company_shop_id = se.shop_id
+     LEFT JOIN gx.dwd_sku_spu_ext_mv sku
+         ON sku.sid = se.sid
+WHERE 1 = 1
+   AND se.sid IN ('ymgyl77')
+GROUP BY se.sid, rel.company_shop_id, rel.provider_nick_no;
 
+WITH sku AS (SELECT
+                 item_id,
+                 goods_id,
+                 barcode
+
+             FROM gx.dwd_sku_spu_ext_mv
+             WHERE sys_shop_id = 2068
+                  )
+
+SELECT
+    o.trade_id              AS `中间件订单ID`,
+    o.goods_no              AS `货品编码`,
+    o.fx_sid                AS `分销卖家账号`,
+    o.gx_sid                AS `供销商卖家账号`,
+    o.fx_shop_id,
+    o.gx_nick_no,
+    o.goods_name            AS `货品名称`,
+    sku.barcode             AS `条码`,
+    CASE rel_gx.request_source
+        WHEN 1 THEN '分找供'
+        WHEN 2 THEN '供找分'
+        WHEN 3 THEN '互为合作'
+    END                     AS `申请来源`,
+    trade_created           AS `订单创建时间`
+
+FROM scm.dwd_trade_order o
+    LEFT JOIN sku ON sku.item_id = o.item_id
+    INNER JOIN gx.dwd_sync_main_kd_supplier_distributor_relevance rel_gx
+        ON rel_gx.provider_nick_no = o.gx_nick_no
+    INNER JOIN gx.dwd_sync_main_kd_supplier_distributor_relevance rel_fx
+        ON rel_fx.distributor_shop_id = o.fx_shop_id
+WHERE trade_created >= DATE_SUB(CURDATE(), interval 1 day)
+LIMIT 2000;
