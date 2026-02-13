@@ -11,7 +11,7 @@ WITH fx AS (SELECT
                                        AS 'shop_category',
                 request_source         AS 're_source',
                 fx.client_id,
-			        	fx.role_mask,
+			    fx.role_mask,
                 auth_mode
              FROM gx.dwd_sync_main_kd_supplier_distributor_relevance sup_dis_relevance
                   inner join gx.dwd_sync_main_kd_supplier_settle se
@@ -23,22 +23,23 @@ WITH fx AS (SELECT
              AND fx.merchant_status = 50
              AND fx.is_delete = 0
              AND cooperation_status = 70
+	         [[ AND FIND_IN_SET(fx.fx_sid, REPLACE({{fx_sid}}, "'", '')) > 0 ]]
             ),
 	 refoud AS (SELECT fx_nick_no,
-                     COUNT(refoud_id)                                AS 'refoud_count',
-                     SUM(return_main_total_amount)                   AS 'return_amount'                 
+                       COUNT(refoud_id)                                AS 'refoud_count',
+                       SUM(return_main_total_amount)                   AS 'return_amount'                 
               FROM scm.dwd_refoud_order
               WHERE 1 = 1
-			      	[[AND created_time >= DATE_SUB(CURDATE(), INTERVAL {{stats_day}} DAY)]]
-				      GROUP BY fx_nick_no
+			  [[AND created_time >= DATE_SUB(CURDATE(), INTERVAL {{stats_day}} DAY)]]
+			  GROUP BY fx_nick_no
                 ),
 	 sku AS (SELECT gp.sys_shop_id                                     AS 'shop_id',
-                  COUNT(gp.id)                                       AS 'sku_count',
-			            COUNT(ext.id)                                      AS 'sku_count_gx',
-                  COUNT(IF(barcode != '',  barcode, NULL))           AS 'barcode_sku'
+                    COUNT(gp.id)                                       AS 'sku_count',
+			        COUNT(ext.id)                                      AS 'sku_count_gx',
+                    COUNT(IF(barcode != '',  barcode, NULL))           AS 'barcode_sku'
            FROM gx.dwd_sync_scmgx_kd_goods_pool_product gp
-				        LEFT JOIN gx.dwd_sku_spu_ext_mv ext 
-										ON gp.sys_shop_id = ext.sys_shop_id AND gp.id = ext.id
+				LEFT JOIN gx.dwd_sku_spu_ext_mv ext 
+					ON gp.sys_shop_id = ext.sys_shop_id AND gp.id = ext.id
            GROUP BY gp.sys_shop_id    
 			),
 	 order_info AS (SELECT trade_order.gx_nick_no,
@@ -51,6 +52,16 @@ WITH fx AS (SELECT
                   WHERE  1 = 1
 				        	[[AND trade_date >= date_sub(curdate(), INTERVAL {{stats_day}} day) ]]
                     ),
+	gx_count AS (SELECT
+                      fx.gx_sid,
+                      fx.fx_sid,
+                      SUM(order_info.trade_count)                 AS 'gf_order_num'
+                  FROM fx
+				      LEFT JOIN order_info ON fx.gx_nick_no = order_info.gx_nick_no
+                        AND fx.fx_nick_no = order_info.fx_nick_no
+				  WHERE 1 = 1
+				  [[ AND fx.gx_sid IN ({{gx_sid}}) ]]
+                  GROUP BY fx.gx_sid, fx.fx_sid),	
 	 count AS (SELECT
                    fx.fx_sid,
 					         SUM(order_info.trade_count)             AS 'order_num',
@@ -66,37 +77,38 @@ WITH fx AS (SELECT
      )	
 SELECT DISTINCT
     fx.fx_sid                           AS `分销商卖家账号`,
-	  fx.fx_shop_id                       AS `分销商shopID`,
+	fx.fx_shop_id                       AS `分销商shopID`,
   	fx.nick_name                        AS `店铺名称`,
   	gx_count                            AS `合作的供销商数量`,
   	order_num                           AS `分销总单量`,
+	IFNULL(gf_order_num, 0)             AS `该供销商下的单量`,  
   	order_num_1                         AS `分找供单量`,
     refoud_count                        AS `退款单量`,
   	return_amount                       AS `退款金额`,
     gmv_fx                              AS `分销商gmv`,
     CASE fx.client_id 
 		    WHEN 1 THEN '跨境'
-				WHEN 2 THEN '企业版'
-				WHEN 3 THEN '旗舰版'
-				WHEN 4 THEN 'ekb老账户'
-				WHEN 5 THEN '发得快'
-				WHEN 6 THEN '超群' 
-				WHEN 8 THEN 'Y'
-				WHEN 9 THEN 'SCM'
-				WHEN 10 THEN '慧经营'
-				WHEN 11 THEN '奇门'
-				WHEN 12 THEN 'SCM-EKB'
-	  END                                 AS `分销业务线`,
-	  sku.sku_count                       AS `分销商货品数量`,
+			WHEN 2 THEN '企业版'
+			WHEN 3 THEN '旗舰版'
+			WHEN 4 THEN 'ekb老账户'
+			WHEN 5 THEN '发得快'
+			WHEN 6 THEN '超群' 
+			WHEN 8 THEN 'Y'
+			WHEN 9 THEN 'SCM'
+			WHEN 10 THEN '慧经营'
+			WHEN 11 THEN '奇门'
+			WHEN 12 THEN 'SCM-EKB'
+	END                                 AS `分销业务线`,
+	sku.sku_count                       AS `分销商货品数量`,
   	sku.sku_count_gx                    AS `供销侧货品数量`,
     sku.barcode_sku                     AS `有条码的货品数量`
 
 FROM fx
     LEFT JOIN sku ON fx.fx_shop_id = sku.shop_id
   	LEFT JOIN count ON count.fx_sid = fx.fx_sid
+	LEFT JOIN gx_count ON gx_count.fx_sid = fx.fx_sid
   	LEFT JOIN refoud ro
         ON fx.fx_nick_no = ro.fx_nick_no 
 WHERE 1 = 1
-[[ AND FIND_IN_SET(fx.fx_sid, REPLACE({{fx_sid}}, "'", '')) > 0 ]]
 [[ AND gx_count > {{gx_num_check}} ]]
 ORDER BY `分找供单量` DESC;
